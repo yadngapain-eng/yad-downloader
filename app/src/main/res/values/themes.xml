@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.YadDownloader" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#00E5FF</item>
+        <item name="colorPrimaryDark">#0072FF</item>
+        <item name="colorAccent">#FFD54F</item>
+        <item name="android:windowBackground">#0A0E27</item>
+        <item name="android:statusBarColor">#060918</item>
+    </style>
+</resources>
