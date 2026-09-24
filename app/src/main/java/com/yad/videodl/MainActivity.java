@@ -1,25 +1,41 @@
 package com.yad.videodl;
 
 import android.Manifest;
+import android.app.DownloadManager;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.View;
 import android.widget.*;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import com.yausername.youtubedl_android.YoutubeDL;
-import com.yausername.youtubedl_android.YoutubeDLRequest;
-import com.yausername.youtubedl_android.YoutubeDLResponse;
-import com.yausername.ffmpeg.FFmpeg;
+import org.schabi.newpipe.extractor.NewPipe;
+import org.schabi.newpipe.extractor.ServiceList;
+import org.schabi.newpipe.extractor.stream.StreamInfo;
+import org.schabi.newpipe.extractor.stream.VideoStream;
+import org.schabi.newpipe.extractor.stream.AudioStream;
+import org.schabi.newpipe.extractor.stream.Stream;
+import org.schabi.newpipe.extractor.downloader.Downloader;
+import org.schabi.newpipe.extractor.downloader.Request;
+import org.schabi.newpipe.extractor.downloader.Response;
+import org.schabi.newpipe.extractor.exceptions.ExtractionException;
 
-import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+import okhttp3.OkHttpClient;
+import okhttp3.RequestBody;
+import okhttp3.ResponseBody;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -29,7 +45,6 @@ public class MainActivity extends AppCompatActivity {
     private Button btnDownload, btnInfo, btnPaste;
     private ScrollView logScroll;
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private boolean initDone = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -37,8 +52,7 @@ public class MainActivity extends AppCompatActivity {
         buildUI();
         requestStoragePermission();
         handleShareIntent(getIntent());
-
-        new Thread(this::initYtDlp).start();
+        initNewPipe();
     }
 
     @Override
@@ -71,7 +85,7 @@ public class MainActivity extends AppCompatActivity {
         root.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("YouTube, Facebook, TikTok, Instagram, dll");
+        subtitle.setText("YouTube, SoundCloud, PeerTube, Bandcamp");
         subtitle.setTextSize(12);
         subtitle.setTextColor(0xFF8892B0);
         subtitle.setPadding(0, 0, 0, 24);
@@ -117,7 +131,7 @@ public class MainActivity extends AppCompatActivity {
         root.addView(progressBar);
 
         tvStatus = new TextView(this);
-        tvStatus.setText("Menyiapkan yt-dlp...");
+        tvStatus.setText("Menyiapkan...");
         tvStatus.setTextColor(0xFF00E5FF);
         tvStatus.setPadding(0, 8, 0, 16);
         root.addView(tvStatus);
@@ -181,23 +195,46 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ============================================
-    // INIT youtubedl-android
+    // INIT NewPipe
     // ============================================
-    private void initYtDlp() {
+    private void initNewPipe() {
         try {
-            log("⬇️ Init YoutubeDL...");
-            YoutubeDL.getInstance().init(getApplication());
-            log("✅ YoutubeDL OK");
-
-            log("⬇️ Init FFmpeg...");
-            FFmpeg.getInstance().init(getApplication());
-            log("✅ FFmpeg OK");
-
-            initDone = true;
+            NewPipe.init(new OkHttpDownloader());
+            log("✅ NewPipe siap.");
             setStatus("Siap.");
         } catch (Exception e) {
             log("❌ Init error: " + e.getMessage());
             setStatus("❌ Init gagal");
+        }
+    }
+
+    // Downloader untuk NewPipe pakai OkHttp
+    static class OkHttpDownloader extends Downloader {
+        private final OkHttpClient client = new OkHttpClient.Builder().build();
+
+        @Override
+        public Response execute(Request request) throws IOException {
+            String method = request.httpMethod();
+            String url = request.url();
+            List<String> headers = new ArrayList<>();
+            for (java.util.Map.Entry<String, List<String>> e : request.headers().entrySet()) {
+                for (String v : e.getValue()) headers.add(e.getKey() + ": " + v);
+            }
+
+            okhttp3.Request.Builder b = new okhttp3.Request.Builder().url(url);
+            for (java.util.Map.Entry<String, List<String>> e : request.headers().entrySet()) {
+                for (String v : e.getValue()) b.addHeader(e.getKey(), v);
+            }
+            if ("POST".equals(method) && request.dataToSend() != null) {
+                b.post(RequestBody.create(request.dataToSend()));
+            }
+            okhttp3.Response resp = client.newCall(b.build()).execute();
+            ResponseBody body = resp.body();
+            String bodyStr = body != null ? body.string() : "";
+            int code = resp.code();
+            String msg = resp.message();
+            java.util.Map<String, List<String>> respHeaders = resp.headers().toMultimap();
+            return new Response(code, msg, respHeaders, bodyStr, url);
         }
     }
 
@@ -207,22 +244,17 @@ public class MainActivity extends AppCompatActivity {
     private void doInfo() {
         String url = etUrl.getText().toString().trim();
         if (url.isEmpty()) { toast("Masukkan URL dulu"); return; }
-        if (!initDone) { toast("Masih init, tunggu..."); return; }
 
         setStatus("Ambil info...");
         log("\n> INFO: " + url);
 
         new Thread(() -> {
             try {
-                YoutubeDLRequest req = new YoutubeDLRequest(url);
-                req.addOption("--no-warnings");
-                req.addOption("--skip-download");
-                req.addOption("--print");
-                req.addOption("%(title)s | %(uploader)s | %(duration)s detik");
-
-                YoutubeDLResponse resp = YoutubeDL.getInstance().execute(req);
-                log("✅ Info:");
-                log(resp.getOut());
+                StreamInfo info = StreamInfo.getInfo(ServiceList.YouTube, url);
+                log("✅ Judul    : " + info.getName());
+                log("   Uploader : " + info.getUploaderName());
+                log("   Durasi   : " + info.getDuration() + " detik");
+                log("   Views    : " + info.getViewCount());
                 setStatus("✅ Info didapat");
             } catch (Exception e) {
                 log("❌ " + e.getMessage());
@@ -232,63 +264,82 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ============================================
-    // DOWNLOAD
+    // DOWNLOAD pakai Android DownloadManager
     // ============================================
     private void doDownload() {
         String url = etUrl.getText().toString().trim();
         if (url.isEmpty()) { toast("Masukkan URL dulu"); return; }
-        if (!initDone) { toast("Masih init, tunggu..."); return; }
 
         btnDownload.setEnabled(false);
         btnDownload.setText("⏳ Memproses...");
-        progressBar.setProgress(0);
-        setStatus("Downloading...");
+        setStatus("Mengambil info stream...");
         log("\n> DOWNLOAD: " + url);
 
         new Thread(() -> {
             try {
-                File outDir = new File(
-                    Environment.getExternalStoragePublicDirectory(
-                        Environment.DIRECTORY_DOWNLOADS),
-                    "YadDownloader");
-                if (!outDir.exists()) outDir.mkdirs();
+                StreamInfo info = StreamInfo.getInfo(ServiceList.YouTube, url);
+                log("✅ Judul: " + info.getName());
 
-                log("Output: " + outDir.getAbsolutePath());
-
-                YoutubeDLRequest req = new YoutubeDLRequest(url);
-                req.addOption("-o", outDir.getAbsolutePath() + "/%(title).80s.%(ext)s");
-                req.addOption("-f", "best[ext=mp4]/best");
-                req.addOption("--no-warnings");
-                req.addOption("--no-playlist");
-                req.addOption("--restrict-filenames");
-
-                YoutubeDLResponse resp = YoutubeDL.getInstance().execute(
-                    req,
-                    null,
-                    (progress, etaInSeconds, line) -> {
-                        ui.post(() -> {
-                            tvStatus.setText("Progress: " + progress + "%");
-                            progressBar.setProgress((int) progress);
-                        });
+                // Ambil video stream (mp4)
+                List<VideoStream> videos = info.getVideoStreams();
+                VideoStream best = null;
+                for (VideoStream v : videos) {
+                    if (v.getFormat() != null && v.getFormat().getName().contains("mp4")) {
+                        if (best == null || v.getResolution().compareTo(best.getResolution()) > 0) {
+                            best = v;
+                        }
                     }
-                );
+                }
+
+                if (best == null && !videos.isEmpty()) best = videos.get(0);
+                if (best == null) {
+                    log("❌ Tidak ada video stream tersedia");
+                    ui.post(() -> resetBtn());
+                    return;
+                }
+
+                final String videoUrl = best.getUrl();
+                final String title = info.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+                log("   Resolusi: " + best.getResolution());
+                log("   Format  : " + best.getFormat().getName());
+                log("⬇️ Mulai download...");
+
+                // Pakai Android DownloadManager (support redirect + resume)
+                DownloadManager.Request req = new DownloadManager.Request(Uri.parse(videoUrl));
+                req.setTitle(title);
+                req.setDescription("YadDownloader");
+                req.setNotificationVisibility(
+                    DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                req.setDestinationInExternalPublicDir(
+                    Environment.DIRECTORY_DOWNLOADS,
+                    "YadDownloader/" + title + ".mp4");
+                req.allowScanningByMediaScanner();
+
+                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+                long id = dm.enqueue(req);
+
+                log("✅ Download dimulai (ID: " + id + ")");
+                log("📁 Cek: Downloads/YadDownloader/" + title + ".mp4");
 
                 ui.post(() -> {
-                    setStatus("✅ Selesai!");
+                    setStatus("✅ Download jalan di background");
                     progressBar.setProgress(100);
-                    btnDownload.setEnabled(true);
-                    btnDownload.setText("⬇️  Download Video");
-                    toast("Cek folder Downloads/YadDownloader");
+                    resetBtn();
+                    toast("Cek notifikasi & folder Downloads/YadDownloader");
                 });
             } catch (Exception e) {
                 log("❌ " + e.getMessage());
                 ui.post(() -> {
                     setStatus("❌ Error");
-                    btnDownload.setEnabled(true);
-                    btnDownload.setText("⬇️  Download Video");
+                    resetBtn();
                 });
             }
         }).start();
+    }
+
+    private void resetBtn() {
+        btnDownload.setEnabled(true);
+        btnDownload.setText("⬇️  Download Video");
     }
 
     private void toast(String s) {
