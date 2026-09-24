@@ -14,11 +14,12 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import java.io.*;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.ArrayList;
-import java.util.List;
+import com.yausername.youtubedl_android.YoutubeDL;
+import com.yausername.youtubedl_android.YoutubeDLRequest;
+import com.yausername.youtubedl_android.YoutubeDLResponse;
+import com.yausername.ffmpeg.FFmpeg;
+
+import java.io.File;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -28,7 +29,7 @@ public class MainActivity extends AppCompatActivity {
     private Button btnDownload, btnInfo, btnPaste;
     private ScrollView logScroll;
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private File ytDlpBin;
+    private boolean initDone = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -37,8 +38,7 @@ public class MainActivity extends AppCompatActivity {
         requestStoragePermission();
         handleShareIntent(getIntent());
 
-        // Download yt-dlp binary di background saat pertama buka
-        new Thread(this::ensureYtDlp).start();
+        new Thread(this::initYtDlp).start();
     }
 
     @Override
@@ -101,7 +101,6 @@ public class MainActivity extends AppCompatActivity {
         btnInfo = mkBtn("ℹ️ Info", 0xFF1A1F3A);
         btnInfo.setOnClickListener(v -> doInfo());
         row1.addView(btnInfo, btnLp());
-
         root.addView(row1);
 
         btnDownload = mkBtn("⬇️  Download Video", 0xFF00E5FF);
@@ -134,7 +133,7 @@ public class MainActivity extends AppCompatActivity {
         tvLog.setTextColor(0xFF8892B0);
         tvLog.setTextSize(11);
         tvLog.setTypeface(android.graphics.Typeface.MONOSPACE);
-        tvLog.setText("Log siap...\\n");
+        tvLog.setText("Log siap...\n");
         logScroll.addView(tvLog);
         root.addView(logScroll);
 
@@ -158,9 +157,14 @@ public class MainActivity extends AppCompatActivity {
         return lp;
     }
 
+    // ============================================
+    // FIX: log() selalu pakai ui.post()
+    // ============================================
     private void log(String msg) {
-        tvLog.append(msg + "\\n");
-        logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+        ui.post(() -> {
+            tvLog.append(msg + "\n");
+            logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+        });
     }
 
     private void setStatus(String msg) {
@@ -176,139 +180,70 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ============ YT-DLP BINARY MANAGEMENT ============
-    private void ensureYtDlp() {
-        ytDlpBin = new File(getFilesDir(), "yt-dlp");
-        if (ytDlpBin.exists() && ytDlpBin.length() > 100000) {
-            log("✅ yt-dlp sudah ada: " + ytDlpBin.length() + " bytes");
-            ui.post(() -> setStatus("Siap."));
-            return;
-        }
-
-        log("⬇️ Download yt-dlp binary...");
-        ui.post(() -> setStatus("Download yt-dlp..."));
-
-        String abi = Build.SUPPORTED_ABIS[0];
-        String url;
-        if (abi.contains("arm64")) {
-            url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64";
-        } else if (abi.contains("arm")) {
-            url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_armv7l";
-        } else if (abi.contains("x86_64")) {
-            url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
-        } else {
-            url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
-        }
-
+    // ============================================
+    // INIT youtubedl-android
+    // ============================================
+    private void initYtDlp() {
         try {
-            downloadFile(url, ytDlpBin);
-            ytDlpBin.setExecutable(true);
-            log("✅ yt-dlp siap: " + ytDlpBin.length() + " bytes");
-            ui.post(() -> setStatus("Siap."));
+            log("⬇️ Init YoutubeDL...");
+            YoutubeDL.getInstance().init(getApplication());
+            log("✅ YoutubeDL OK");
+
+            log("⬇️ Init FFmpeg...");
+            FFmpeg.getInstance().init(getApplication());
+            log("✅ FFmpeg OK");
+
+            initDone = true;
+            setStatus("Siap.");
         } catch (Exception e) {
-            log("❌ Gagal download yt-dlp: " + e.getMessage());
-            ui.post(() -> setStatus("❌ Gagal download yt-dlp"));
+            log("❌ Init error: " + e.getMessage());
+            setStatus("❌ Init gagal");
         }
     }
 
-    private void downloadFile(String urlStr, File dest) throws Exception {
-        URL url = new URL(urlStr);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setInstanceFollowRedirects(true);
-        conn.setRequestProperty("User-Agent", "YadDownloader/1.0");
-        conn.connect();
-
-        int code = conn.getResponseCode();
-        if (code >= 300 && code < 400) {
-            String loc = conn.getHeaderField("Location");
-            conn.disconnect();
-            downloadFile(loc, dest);
-            return;
-        }
-        if (code != 200) throw new IOException("HTTP " + code);
-
-        try (InputStream in = conn.getInputStream();
-             FileOutputStream out = new FileOutputStream(dest)) {
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-        }
-        conn.disconnect();
-    }
-
-    // ============ RUN YT-DLP ============
-    private String runYtDlp(List<String> args, File workDir) throws Exception {
-        List<String> cmd = new ArrayList<>();
-        cmd.add(ytDlpBin.getAbsolutePath());
-        cmd.addAll(args);
-
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.directory(workDir);
-        pb.redirectErrorStream(true);
-
-        Process p = pb.start();
-
-        StringBuilder sb = new StringBuilder();
-        try (BufferedReader br = new BufferedReader(
-                new InputStreamReader(p.getInputStream()))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                sb.append(line).append("\\n");
-                final String l = line;
-                ui.post(() -> log(l));
-            }
-        }
-        int code = p.waitFor();
-        if (code != 0) {
-            throw new Exception("yt-dlp exit " + code + "\\n" + sb.toString());
-        }
-        return sb.toString();
-    }
-
-    // ============ INFO ============
+    // ============================================
+    // INFO
+    // ============================================
     private void doInfo() {
         String url = etUrl.getText().toString().trim();
         if (url.isEmpty()) { toast("Masukkan URL dulu"); return; }
-        if (ytDlpBin == null || !ytDlpBin.exists()) {
-            toast("yt-dlp belum siap, tunggu sebentar"); return;
-        }
+        if (!initDone) { toast("Masih init, tunggu..."); return; }
 
-        setStatus("Mengambil info...");
-        log("\\n> INFO: " + url);
+        setStatus("Ambil info...");
+        log("\n> INFO: " + url);
 
         new Thread(() -> {
             try {
-                List<String> args = new ArrayList<>();
-                args.add("--no-warnings");
-                args.add("--skip-download");
-                args.add("--print");
-                args.add("%(title)s | %(uploader)s | %(duration)s detik");
-                args.add(url);
+                YoutubeDLRequest req = new YoutubeDLRequest(url);
+                req.addOption("--no-warnings");
+                req.addOption("--skip-download");
+                req.addOption("--print");
+                req.addOption("%(title)s | %(uploader)s | %(duration)s detik");
 
-                String out = runYtDlp(args, getCacheDir());
-                ui.post(() -> setStatus("✅ Info didapat"));
+                YoutubeDLResponse resp = YoutubeDL.getInstance().execute(req);
+                log("✅ Info:");
+                log(resp.getOut());
+                setStatus("✅ Info didapat");
             } catch (Exception e) {
-                ui.post(() -> {
-                    setStatus("❌ Error");
-                    log("ERROR: " + e.getMessage());
-                });
+                log("❌ " + e.getMessage());
+                setStatus("❌ Error");
             }
         }).start();
     }
 
-    // ============ DOWNLOAD ============
+    // ============================================
+    // DOWNLOAD
+    // ============================================
     private void doDownload() {
         String url = etUrl.getText().toString().trim();
         if (url.isEmpty()) { toast("Masukkan URL dulu"); return; }
-        if (ytDlpBin == null || !ytDlpBin.exists()) {
-            toast("yt-dlp belum siap"); return;
-        }
+        if (!initDone) { toast("Masih init, tunggu..."); return; }
 
         btnDownload.setEnabled(false);
         btnDownload.setText("⏳ Memproses...");
         progressBar.setProgress(0);
         setStatus("Downloading...");
-        log("\\n> DOWNLOAD: " + url);
+        log("\n> DOWNLOAD: " + url);
 
         new Thread(() -> {
             try {
@@ -320,17 +255,23 @@ public class MainActivity extends AppCompatActivity {
 
                 log("Output: " + outDir.getAbsolutePath());
 
-                List<String> args = new ArrayList<>();
-                args.add("-o");
-                args.add(outDir.getAbsolutePath() + "/%(title).80s.%(ext)s");
-                args.add("-f");
-                args.add("best[ext=mp4]/best");
-                args.add("--no-warnings");
-                args.add("--no-playlist");
-                args.add("--restrict-filenames");
-                args.add(url);
+                YoutubeDLRequest req = new YoutubeDLRequest(url);
+                req.addOption("-o", outDir.getAbsolutePath() + "/%(title).80s.%(ext)s");
+                req.addOption("-f", "best[ext=mp4]/best");
+                req.addOption("--no-warnings");
+                req.addOption("--no-playlist");
+                req.addOption("--restrict-filenames");
 
-                runYtDlp(args, getCacheDir());
+                YoutubeDLResponse resp = YoutubeDL.getInstance().execute(
+                    req,
+                    null,
+                    (progress, etaInSeconds, line) -> {
+                        ui.post(() -> {
+                            tvStatus.setText("Progress: " + progress + "%");
+                            progressBar.setProgress((int) progress);
+                        });
+                    }
+                );
 
                 ui.post(() -> {
                     setStatus("✅ Selesai!");
@@ -340,9 +281,9 @@ public class MainActivity extends AppCompatActivity {
                     toast("Cek folder Downloads/YadDownloader");
                 });
             } catch (Exception e) {
+                log("❌ " + e.getMessage());
                 ui.post(() -> {
                     setStatus("❌ Error");
-                    log("ERROR: " + e.getMessage());
                     btnDownload.setEnabled(true);
                     btnDownload.setText("⬇️  Download Video");
                 });
