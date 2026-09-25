@@ -18,8 +18,6 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import org.json.JSONObject;
-
 import java.io.File;
 
 public class MainActivity extends AppCompatActivity {
@@ -32,7 +30,7 @@ public class MainActivity extends AppCompatActivity {
     private Spinner qualitySpinner;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
-    private DownloaderEngine engine;
+    private CobaltManager cobalt;
     private File downloadDir;
 
     @Override
@@ -51,9 +49,9 @@ public class MainActivity extends AppCompatActivity {
         new Thread(() -> {
             try {
                 log("Menyiapkan downloader...");
-                engine = new DownloaderEngine(this);
-                engine.init();
-                log("Downloader siap: " + engine.getVersion());
+                cobalt = new CobaltManager(this);
+                cobalt.init();
+                log("Siap. Support: YouTube, Facebook, TikTok, IG, Twitter");
                 setStatus("Siap!");
             } catch (Exception e) {
                 log("Gagal init: " + e.getMessage());
@@ -104,14 +102,14 @@ public class MainActivity extends AppCompatActivity {
         root.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("YouTube, Facebook, TikTok, Instagram, dll\nMulti-engine fallback");
+        subtitle.setText("YouTube, Facebook, TikTok, Instagram\nCobalt API - support semua link");
         subtitle.setTextSize(12);
         subtitle.setTextColor(0xFF8892B0);
         subtitle.setPadding(0, 0, 0, 24);
         root.addView(subtitle);
 
         etUrl = new EditText(this);
-        etUrl.setHint("Paste link video di sini...");
+        etUrl.setHint("Paste link video (share link juga bisa)...");
         etUrl.setTextColor(0xFFE8ECFF);
         etUrl.setHintTextColor(0xFF8892B0);
         etUrl.setBackgroundColor(0xFF1A1F3A);
@@ -131,13 +129,13 @@ public class MainActivity extends AppCompatActivity {
         btnPaste.setOnClickListener(v -> pasteFromClipboard());
         row1.addView(btnPaste, btnLp());
 
-        btnInfo = mkBtn("Info", 0xFF1A1F3A);
-        btnInfo.setOnClickListener(v -> doInfo());
+        btnInfo = mkBtn("Clear", 0xFF1A1F3A);
+        btnInfo.setOnClickListener(v -> { etUrl.setText(""); tvLog.setText("Log siap...\n"); });
         row1.addView(btnInfo, btnLp());
         root.addView(row1);
 
         qualitySpinner = new Spinner(this);
-        String[] qualities = {"Best Quality", "1080p", "720p", "480p", "Audio Only"};
+        String[] qualities = {"1080p", "720p", "480p", "360p", "Audio Only (MP3)"};
         ArrayAdapter<String> qAdapter = new ArrayAdapter<>(this,
             android.R.layout.simple_spinner_dropdown_item, qualities);
         qualitySpinner.setAdapter(qAdapter);
@@ -222,47 +220,26 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void doInfo() {
-        if (engine == null || !engine.isReady()) { toast("Downloader belum siap"); return; }
-        String url = etUrl.getText().toString().trim();
-        if (url.isEmpty()) { toast("Masukkan URL"); return; }
-
-        setStatus("Ambil info...");
-        log("\n> INFO: " + url);
-
-        new Thread(() -> {
-            try {
-                JSONObject info = engine.getInfo(url);
-                log("Judul: " + info.optString("title"));
-                log("Uploader: " + info.optString("uploader", info.optString("channel", "?")));
-                log("Durasi: " + info.optInt("duration") + " detik");
-                setStatus("Info didapat");
-            } catch (Exception e) {
-                log("Info tidak tersedia: " + e.getMessage());
-                setStatus("Info gagal");
-            }
-        }).start();
-    }
-
     private void doDownload() {
-        if (engine == null || !engine.isReady()) { toast("Downloader belum siap"); return; }
+        if (cobalt == null || !cobalt.isReady()) { toast("Downloader belum siap"); return; }
         String url = etUrl.getText().toString().trim();
         if (url.isEmpty()) { toast("Masukkan URL"); return; }
 
-        String[] qualities = {"1080", "1080", "720", "480", "audio"};
+        String[] qualities = {"1080", "720", "480", "360", "audio"};
         String quality = qualities[qualitySpinner.getSelectedItemPosition()];
 
         btnDownload.setEnabled(false);
         btnDownload.setText("Downloading...");
-        setStatus("Download...");
+        setStatus("Memproses...");
         updateProgressBar(0);
         log("\n> DOWNLOAD: " + url);
+        log("> Kualitas: " + quality);
 
-        engine.download(url, quality, downloadDir, new DownloaderEngine.Callback() {
+        cobalt.download(url, quality, downloadDir, new CobaltManager.Callback() {
             @Override
-            public void onProgress(float percent, String message) {
-                updateProgressBar((int) percent);
-                setStatus("Download: " + (int) percent + "%");
+            public void onProgress(int percent, String message) {
+                updateProgressBar(percent);
+                setStatus(percent + "% — " + message);
             }
             @Override
             public void onLog(String line) { log(line); }
@@ -270,13 +247,13 @@ public class MainActivity extends AppCompatActivity {
             public void onDone(boolean success, String filePath, String error) {
                 ui.post(() -> {
                     if (success) {
-                        setStatus("Selesai");
-                        log("File: " + filePath);
-                        toast("Tersimpan: " + filePath);
+                        setStatus("✅ Selesai");
+                        log("✅ File: " + filePath);
+                        toast("Tersimpan di Downloads/YadDownloader");
                     } else {
-                        setStatus("Gagal");
-                        log("Error: " + error);
-                        toast(error);
+                        setStatus("❌ Gagal");
+                        log("❌ Error: " + error);
+                        toast("Gagal: " + error);
                     }
                     btnDownload.setEnabled(true);
                     btnDownload.setText("Download");
