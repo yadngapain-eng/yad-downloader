@@ -8,9 +8,8 @@ android {
         applicationId "com.yad.videodl"
         minSdk 24
         targetSdk 34
-        versionCode 13
-        versionName "13.0.0"
-        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
+        versionCode 14
+        versionName "14.0.0"
     }
 
     buildTypes {
@@ -27,23 +26,9 @@ android {
 
     packaging {
         resources {
-            excludes += [
-                'META-INF/DEPENDENCIES',
-                'META-INF/LICENSE',
-                'META-INF/LICENSE.txt',
-                'META-INF/NOTICE',
-                'META-INF/NOTICE.txt',
-                'META-INF/INDEX.LIST',
-                'META-INF/*.kotlin_module'
-            ]
-        }
-        // FIX: exclude libc++_shared.so yang duplikat dari opencv
-        jniLibs {
-            useLegacyPackaging = true
-            pickFirsts += [
-                'lib/**/libc++_shared.so',
-                'lib/**/libc++_shared.so'
-            ]
+            excludes += ['META-INF/DEPENDENCIES','META-INF/LICENSE',
+                         'META-INF/LICENSE.txt','META-INF/NOTICE',
+                         'META-INF/NOTICE.txt','META-INF/INDEX.LIST']
         }
     }
 }
@@ -52,10 +37,5 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-
-    // FFmpeg untuk hapus watermark
-    implementation 'com.antonkarpenko:ffmpeg-kit-full-gpl:2.1.0'
-
-    // OpenCV untuk image recognition
-    implementation 'com.quickbirdstudios:opencv:4.5.3.0'
+    // OpenCV + FFmpeg dihapus dulu biar build sukses
 }
