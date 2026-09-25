@@ -59,3 +59,6 @@ Atau via Android Studio:
 - YouTube sering update algoritma, app mungkin perlu di-update berkala
 
 MIT License - Copyright 2026 YadDownloader
+
+
+<!-- Build trigger: 2026-09-25T09:08:11.543521 -->
