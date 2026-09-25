@@ -1,7 +1,8 @@
 package com.yad.videodl;
 
 import android.Manifest;
-import android.app.DownloadManager;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -11,7 +12,6 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
 import android.view.View;
 import android.widget.*;
 import androidx.appcompat.app.AppCompatActivity;
@@ -22,16 +22,16 @@ import org.schabi.newpipe.extractor.NewPipe;
 import org.schabi.newpipe.extractor.ServiceList;
 import org.schabi.newpipe.extractor.stream.StreamInfo;
 import org.schabi.newpipe.extractor.stream.VideoStream;
-import org.schabi.newpipe.extractor.stream.AudioStream;
-import org.schabi.newpipe.extractor.stream.Stream;
 import org.schabi.newpipe.extractor.downloader.Downloader;
 import org.schabi.newpipe.extractor.downloader.Request;
 import org.schabi.newpipe.extractor.downloader.Response;
-import org.schabi.newpipe.extractor.exceptions.ExtractionException;
 
-import java.io.IOException;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import okhttp3.OkHttpClient;
 import okhttp3.RequestBody;
@@ -46,13 +46,29 @@ public class MainActivity extends AppCompatActivity {
     private ScrollView logScroll;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
+    // User-Agent agar tidak diblok YouTube
+    private static final String USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         buildUI();
         requestStoragePermission();
         handleShareIntent(getIntent());
-        initNewPipe();
+
+        // FIX: Init NewPipe di background thread (dulu crash karena main thread)
+        new Thread(() -> {
+            try {
+                NewPipe.init(new OkHttpDownloader());
+                log("NewPipe siap.");
+                setStatus("Siap.");
+            } catch (Exception e) {
+                log("Init error: " + e.getMessage());
+                setStatus("Init gagal");
+            }
+        }).start();
     }
 
     @Override
@@ -78,7 +94,7 @@ public class MainActivity extends AppCompatActivity {
         root.setBackgroundColor(0xFF0A0E27);
 
         TextView title = new TextView(this);
-        title.setText("🎬 YadDownloader");
+        title.setText("YadDownloader");
         title.setTextSize(24);
         title.setTextColor(0xFF00E5FF);
         title.setPadding(0, 0, 0, 8);
@@ -108,16 +124,16 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout row1 = new LinearLayout(this);
         row1.setOrientation(LinearLayout.HORIZONTAL);
 
-        btnPaste = mkBtn("📋 Paste", 0xFF1A1F3A);
+        btnPaste = mkBtn("Paste", 0xFF1A1F3A);
         btnPaste.setOnClickListener(v -> pasteFromClipboard());
         row1.addView(btnPaste, btnLp());
 
-        btnInfo = mkBtn("ℹ️ Info", 0xFF1A1F3A);
+        btnInfo = mkBtn("Info", 0xFF1A1F3A);
         btnInfo.setOnClickListener(v -> doInfo());
         row1.addView(btnInfo, btnLp());
         root.addView(row1);
 
-        btnDownload = mkBtn("⬇️  Download Video", 0xFF00E5FF);
+        btnDownload = mkBtn("Download Video", 0xFF00E5FF);
         btnDownload.setTextColor(0xFF0A0E27);
         btnDownload.setOnClickListener(v -> doDownload());
         LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
@@ -171,9 +187,6 @@ public class MainActivity extends AppCompatActivity {
         return lp;
     }
 
-    // ============================================
-    // FIX: log() selalu pakai ui.post()
-    // ============================================
     private void log(String msg) {
         ui.post(() -> {
             tvLog.append(msg + "\n");
@@ -185,56 +198,59 @@ public class MainActivity extends AppCompatActivity {
         ui.post(() -> tvStatus.setText(msg));
     }
 
+    private void setProgress(int pct) {
+        ui.post(() -> progressBar.setProgress(pct));
+    }
+
     private void pasteFromClipboard() {
-        android.content.ClipboardManager cm = (android.content.ClipboardManager)
-            getSystemService(CLIPBOARD_SERVICE);
+        ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         if (cm != null && cm.hasPrimaryClip()) {
-            CharSequence text = cm.getPrimaryClip().getItemAt(0).getText();
-            if (text != null) etUrl.setText(text.toString().trim());
+            ClipData clip = cm.getPrimaryClip();
+            if (clip != null && clip.getItemCount() > 0) {
+                CharSequence text = clip.getItemAt(0).getText();
+                if (text != null) etUrl.setText(text.toString().trim());
+            }
         }
     }
 
     // ============================================
-    // INIT NewPipe
+    // OkHttpDownloader dengan User-Agent (FIX #3)
     // ============================================
-    private void initNewPipe() {
-        try {
-            NewPipe.init(new OkHttpDownloader());
-            log("✅ NewPipe siap.");
-            setStatus("Siap.");
-        } catch (Exception e) {
-            log("❌ Init error: " + e.getMessage());
-            setStatus("❌ Init gagal");
-        }
-    }
-
-    // Downloader untuk NewPipe pakai OkHttp
     static class OkHttpDownloader extends Downloader {
-        private final OkHttpClient client = new OkHttpClient.Builder().build();
+        private final OkHttpClient client = new OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .build();
 
         @Override
-        public Response execute(Request request) throws IOException {
+        public Response execute(Request request) throws java.io.IOException {
             String method = request.httpMethod();
             String url = request.url();
-            List<String> headers = new ArrayList<>();
-            for (java.util.Map.Entry<String, List<String>> e : request.headers().entrySet()) {
-                for (String v : e.getValue()) headers.add(e.getKey() + ": " + v);
-            }
 
-            okhttp3.Request.Builder b = new okhttp3.Request.Builder().url(url);
+            okhttp3.Request.Builder b = new okhttp3.Request.Builder()
+                .url(url)
+                .header("User-Agent", USER_AGENT);
+
             for (java.util.Map.Entry<String, List<String>> e : request.headers().entrySet()) {
                 for (String v : e.getValue()) b.addHeader(e.getKey(), v);
             }
+
             if ("POST".equals(method) && request.dataToSend() != null) {
                 b.post(RequestBody.create(request.dataToSend()));
             }
+
             okhttp3.Response resp = client.newCall(b.build()).execute();
             ResponseBody body = resp.body();
             String bodyStr = body != null ? body.string() : "";
-            int code = resp.code();
-            String msg = resp.message();
-            java.util.Map<String, List<String>> respHeaders = resp.headers().toMultimap();
-            return new Response(code, msg, respHeaders, bodyStr, url);
+
+            return new Response(
+                resp.code(),
+                resp.message(),
+                resp.headers().toMultimap(),
+                bodyStr,
+                url
+            );
         }
     }
 
@@ -251,36 +267,36 @@ public class MainActivity extends AppCompatActivity {
         new Thread(() -> {
             try {
                 StreamInfo info = StreamInfo.getInfo(ServiceList.YouTube, url);
-                log("✅ Judul    : " + info.getName());
-                log("   Uploader : " + info.getUploaderName());
-                log("   Durasi   : " + info.getDuration() + " detik");
-                log("   Views    : " + info.getViewCount());
-                setStatus("✅ Info didapat");
+                log("Judul    : " + info.getName());
+                log("Uploader : " + info.getUploaderName());
+                log("Durasi   : " + info.getDuration() + " detik");
+                log("Views    : " + info.getViewCount());
+                setStatus("Info didapat");
             } catch (Exception e) {
-                log("❌ " + e.getMessage());
-                setStatus("❌ Error");
+                log("ERROR: " + e.getMessage());
+                setStatus("Error");
             }
         }).start();
     }
 
     // ============================================
-    // DOWNLOAD pakai Android DownloadManager
+    // DOWNLOAD dengan OkHttp stream (FIX #4)
     // ============================================
     private void doDownload() {
         String url = etUrl.getText().toString().trim();
         if (url.isEmpty()) { toast("Masukkan URL dulu"); return; }
 
         btnDownload.setEnabled(false);
-        btnDownload.setText("⏳ Memproses...");
+        btnDownload.setText("Memproses...");
         setStatus("Mengambil info stream...");
+        setProgress(0);
         log("\n> DOWNLOAD: " + url);
 
         new Thread(() -> {
             try {
                 StreamInfo info = StreamInfo.getInfo(ServiceList.YouTube, url);
-                log("✅ Judul: " + info.getName());
+                log("Judul: " + info.getName());
 
-                // Ambil video stream (mp4)
                 List<VideoStream> videos = info.getVideoStreams();
                 VideoStream best = null;
                 for (VideoStream v : videos) {
@@ -290,47 +306,80 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
                 }
-
                 if (best == null && !videos.isEmpty()) best = videos.get(0);
+
                 if (best == null) {
-                    log("❌ Tidak ada video stream tersedia");
-                    ui.post(() -> resetBtn());
+                    log("Tidak ada video stream");
+                    ui.post(this::resetBtn);
                     return;
                 }
 
-                final String videoUrl = best.getUrl();
-                final String title = info.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
-                log("   Resolusi: " + best.getResolution());
-                log("   Format  : " + best.getFormat().getName());
-                log("⬇️ Mulai download...");
+                String videoUrl = best.getUrl();
+                String safeTitle = info.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+                if (safeTitle.length() > 80) safeTitle = safeTitle.substring(0, 80);
 
-                // Pakai Android DownloadManager (support redirect + resume)
-                DownloadManager.Request req = new DownloadManager.Request(Uri.parse(videoUrl));
-                req.setTitle(title);
-                req.setDescription("YadDownloader");
-                req.setNotificationVisibility(
-                    DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-                req.setDestinationInExternalPublicDir(
-                    Environment.DIRECTORY_DOWNLOADS,
-                    "YadDownloader/" + title + ".mp4");
-                req.allowScanningByMediaScanner();
+                log("Resolusi: " + best.getResolution());
+                log("Format  : " + best.getFormat().getName());
+                log("Mulai download...");
 
-                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
-                long id = dm.enqueue(req);
+                // FIX: Stream manual dengan OkHttp (bukan DownloadManager)
+                File dir = new File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                    "YadDownloader"
+                );
+                if (!dir.exists()) dir.mkdirs();
+                File outFile = new File(dir, safeTitle + ".mp4");
 
-                log("✅ Download dimulai (ID: " + id + ")");
-                log("📁 Cek: Downloads/YadDownloader/" + title + ".mp4");
+                OkHttpClient dlClient = new OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(120, TimeUnit.SECONDS)
+                    .build();
 
+                okhttp3.Request req = new okhttp3.Request.Builder()
+                    .url(videoUrl)
+                    .header("User-Agent", USER_AGENT)
+                    .header("Referer", "https://www.youtube.com/")
+                    .build();
+
+                okhttp3.Response resp = dlClient.newCall(req).execute();
+                if (!resp.isSuccessful()) {
+                    log("HTTP error: " + resp.code());
+                    ui.post(this::resetBtn);
+                    return;
+                }
+
+                long total = resp.body().contentLength();
+                try (InputStream in = resp.body().byteStream();
+                     FileOutputStream out = new FileOutputStream(outFile)) {
+                    byte[] buf = new byte[8192];
+                    long downloaded = 0;
+                    int n;
+                    int lastPct = -1;
+                    while ((n = in.read(buf)) > 0) {
+                        out.write(buf, 0, n);
+                        downloaded += n;
+                        if (total > 0) {
+                            int pct = (int) (downloaded * 100 / total);
+                            if (pct != lastPct && pct % 2 == 0) {
+                                setProgress(pct);
+                                lastPct = pct;
+                            }
+                        }
+                    }
+                }
+
+                final String path = outFile.getAbsolutePath();
+                log("Selesai: " + path);
                 ui.post(() -> {
-                    setStatus("✅ Download jalan di background");
-                    progressBar.setProgress(100);
+                    setStatus("Download selesai");
+                    setProgress(100);
                     resetBtn();
-                    toast("Cek notifikasi & folder Downloads/YadDownloader");
+                    toast("Tersimpan di: " + path);
                 });
             } catch (Exception e) {
-                log("❌ " + e.getMessage());
+                log("ERROR: " + e.getMessage());
                 ui.post(() -> {
-                    setStatus("❌ Error");
+                    setStatus("Error");
                     resetBtn();
                 });
             }
@@ -339,11 +388,11 @@ public class MainActivity extends AppCompatActivity {
 
     private void resetBtn() {
         btnDownload.setEnabled(true);
-        btnDownload.setText("⬇️  Download Video");
+        btnDownload.setText("Download Video");
     }
 
     private void toast(String s) {
-        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, s, Toast.LENGTH_LONG).show();
     }
 
     private void requestStoragePermission() {
@@ -352,7 +401,7 @@ public class MainActivity extends AppCompatActivity {
                 try {
                     startActivity(new Intent(
                         android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                        android.net.Uri.parse("package:" + getPackageName())));
+                        Uri.parse("package:" + getPackageName())));
                 } catch (Exception e) {
                     try {
                         startActivity(new Intent(
