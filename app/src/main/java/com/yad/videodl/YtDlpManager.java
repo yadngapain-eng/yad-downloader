@@ -3,50 +3,81 @@ package com.yad.videodl;
 import android.content.Context;
 import android.util.Log;
 
+import com.yausername.youtubedl_android.YoutubeDL;
+import com.yausername.youtubedl_android.YoutubeDLRequest;
+import com.yausername.youtubedl_android.YoutubeDLResponse;
+import com.yausername.ffmpeg.FFmpeg;
+
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.InputStreamReader;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+/**
+ * Wrapper yt-dlp pakai youtubedl-android (bundled Python).
+ * Support YouTube, Facebook, TikTok, IG, dll.
+ */
 public class YtDlpManager {
+
     private static final String TAG = "YtDlpManager";
     private final Context ctx;
-    private final File ytDlp;
+    private boolean initialized = false;
 
     public YtDlpManager(Context ctx) {
         this.ctx = ctx;
-        this.ytDlp = BinaryInstaller.getYtDlp(ctx);
+    }
+
+    /**
+     * Init library. WAJIB dipanggil di background thread.
+     */
+    public void install() throws Exception {
+        YoutubeDL.getInstance().init(ctx);
+        FFmpeg.getInstance().init(ctx);
+        initialized = true;
+        Log.d(TAG, "youtubedl-android initialized");
     }
 
     public boolean isReady() {
-        return ytDlp.exists() && ytDlp.canExecute();
+        return initialized;
     }
 
-    public void install() throws Exception {
-        BinaryInstaller.installBinary(ctx, "yt-dlp", "yt-dlp");
+    public String getVersion() {
+        try {
+            return YoutubeDL.getInstance().version(ctx);
+        } catch (Exception e) {
+            return "unknown";
+        }
     }
 
-    public String getVersion() throws Exception {
-        List<String> out = run(new String[]{ytDlp.getAbsolutePath(), "--version"}, 10000);
-        return out.isEmpty() ? "unknown" : out.get(0).trim();
-    }
-
+    /**
+     * Ambil info video (format JSON).
+     */
     public JSONObject getInfo(String url) throws Exception {
-        List<String> out = run(new String[]{
-            ytDlp.getAbsolutePath(),
-            "-j", "--no-warnings", "--no-playlist",
-            url
-        }, 60000);
-        if (out.isEmpty()) throw new Exception("yt-dlp no output");
-        return new JSONObject(out.get(0));
+        YoutubeDLRequest req = new YoutubeDLRequest(url);
+        req.addOption("--dump-json");
+        req.addOption("--no-warnings");
+        req.addOption("--no-playlist");
+
+        YoutubeDLResponse resp = YoutubeDL.getInstance().execute(req, null, null);
+        String out = resp.getOut();
+
+        if (out == null || out.trim().isEmpty()) {
+            throw new Exception("No output from yt-dlp");
+        }
+
+        // Ambil baris JSON terakhir
+        String[] lines = out.trim().split("\n");
+        return new JSONObject(lines[lines.length - 1]);
     }
 
+    /**
+     * Download video. Return path file hasil.
+     */
     public String download(String url, String quality, File outputDir, DownloadCallback cb) throws Exception {
         if (!outputDir.exists()) outputDir.mkdirs();
 
+        // Format selector
         String format;
         switch (quality == null ? "" : quality) {
             case "audio": format = "bestaudio[ext=m4a]/bestaudio"; break;
@@ -58,84 +89,38 @@ public class YtDlpManager {
 
         String outputTemplate = new File(outputDir, "%(title).80s.%(ext)s").getAbsolutePath();
 
-        List<String> cmd = new ArrayList<>();
-        cmd.add(ytDlp.getAbsolutePath());
-        cmd.add("-f"); cmd.add(format);
-        cmd.add("-o"); cmd.add(outputTemplate);
-        cmd.add("--no-warnings");
-        cmd.add("--no-playlist");
-        cmd.add("--newline");
-        cmd.add(url);
+        YoutubeDLRequest req = new YoutubeDLRequest(url);
+        req.addOption("-f", format);
+        req.addOption("-o", outputTemplate);
+        req.addOption("--no-warnings");
+        req.addOption("--no-playlist");
+        req.addOption("--newline");
 
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.redirectErrorStream(true);
-        Process proc = pb.start();
-
-        BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()));
-        String line;
-        String lastFile = null;
-
-        while ((line = reader.readLine()) != null) {
-            Log.d(TAG, "yt-dlp: " + line);
-
-            if (line.contains("[download]") && line.contains("%")) {
-                try {
-                    int pctStart = line.indexOf(']') + 1;
-                    String rest = line.substring(pctStart).trim();
-                    int pctEnd = rest.indexOf('%');
-                    if (pctEnd > 0) {
-                        float pct = Float.parseFloat(rest.substring(0, pctEnd).trim());
-                        if (cb != null) cb.onProgress(pct, line);
-                    }
-                } catch (Exception ignored) {}
+        YoutubeDLResponse resp = YoutubeDL.getInstance().execute(req, null, (progress, etaInSeconds, line) -> {
+            if (cb != null) {
+                cb.onProgress((float) progress, line);
+                cb.onLog(line);
             }
+        });
 
-            if (line.contains("[download] Destination:")) {
-                lastFile = line.substring(line.indexOf("Destination:") + 12).trim();
-            }
-            if (line.contains("has already been downloaded")) {
-                lastFile = line.split(" has already")[0].replaceAll("^\\[download\\]\\s*", "").trim();
-            }
-            if (line.contains("[ExtractAudio] Destination:")) {
-                lastFile = line.substring(line.indexOf("Destination:") + 12).trim();
-            }
-
-            if (cb != null) cb.onLog(line);
-        }
-
-        int exit = proc.waitFor();
-        if (exit != 0) throw new Exception("yt-dlp exit code: " + exit);
-
-        if (lastFile == null || !new File(lastFile).exists()) {
-            File[] files = outputDir.listFiles();
-            if (files != null && files.length > 0) {
-                File newest = files[0];
-                for (File f : files) {
-                    if (f.lastModified() > newest.lastModified()) newest = f;
-                }
-                lastFile = newest.getAbsolutePath();
+        String out = resp.getOut();
+        if (cb != null && out != null) {
+            for (String line : out.split("\n")) {
+                cb.onLog(line);
             }
         }
 
-        return lastFile;
-    }
-
-    private List<String> run(String[] cmd, long timeoutMs) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.redirectErrorStream(true);
-        Process proc = pb.start();
-
-        List<String> lines = new ArrayList<>();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()));
-        String line;
-        while ((line = reader.readLine()) != null) lines.add(line);
-
-        boolean done = proc.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
-        if (!done) {
-            proc.destroyForcibly();
-            throw new Exception("Timeout");
+        // Cari file hasil download
+        File[] files = outputDir.listFiles();
+        if (files != null && files.length > 0) {
+            File newest = files[0];
+            for (File f : files) {
+                if (f.lastModified() > newest.lastModified()) newest = f;
+            }
+            return newest.getAbsolutePath();
         }
-        return lines;
+
+        return null;
     }
 
     public interface DownloadCallback {
