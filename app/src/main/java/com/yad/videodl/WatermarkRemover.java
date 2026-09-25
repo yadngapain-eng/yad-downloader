@@ -4,7 +4,6 @@ import android.content.Context;
 import android.util.Log;
 
 import com.antonkarpenko.ffmpegkit.FFmpegKit;
-import com.antonkarpenko.ffmpegkit.FFmpegSession;
 import com.antonkarpenko.ffmpegkit.FFprobeKit;
 import com.antonkarpenko.ffmpegkit.MediaInformation;
 import com.antonkarpenko.ffmpegkit.ReturnCode;
@@ -37,21 +36,26 @@ public class WatermarkRemover {
         int width = 0, height = 0;
         for (StreamInformation s : info.getStreams()) {
             if ("video".equals(s.getType())) {
-                String w = s.getProperties().get("width");
-                String h = s.getProperties().get("height");
-                if (w != null && h != null) {
-                    try {
-                        width = Integer.parseInt(w);
-                        height = Integer.parseInt(h);
-                    } catch (Exception e) {}
-                    break;
+                // FIX: pakai getAllProperties() bukan getProperties()
+                try {
+                    String w = String.valueOf(s.getAllProperties().get("width"));
+                    String h = String.valueOf(s.getAllProperties().get("height"));
+                    if (w != null && h != null && !w.equals("null") && !h.equals("null")) {
+                        width = (int) Double.parseDouble(w);
+                        height = (int) Double.parseDouble(h);
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Parse resolusi gagal: " + e.getMessage());
                 }
+                break;
             }
         }
 
         if (width == 0 || height == 0) {
-            cb.onDone(false, null, "Resolusi tidak terdeteksi");
-            return;
+            // Fallback: pakai resolusi default
+            width = 720;
+            height = 1280;
+            Log.w(TAG, "Pakai resolusi default: 720x1280");
         }
 
         Log.d(TAG, "Resolusi: " + width + "x" + height);
