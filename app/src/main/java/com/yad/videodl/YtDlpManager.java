@@ -11,13 +11,7 @@ import com.yausername.ffmpeg.FFmpeg;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
-/**
- * Wrapper yt-dlp pakai youtubedl-android (bundled Python).
- * Support YouTube, Facebook, TikTok, IG, dll.
- */
 public class YtDlpManager {
 
     private static final String TAG = "YtDlpManager";
@@ -28,9 +22,6 @@ public class YtDlpManager {
         this.ctx = ctx;
     }
 
-    /**
-     * Init library. WAJIB dipanggil di background thread.
-     */
     public void install() throws Exception {
         YoutubeDL.getInstance().init(ctx);
         FFmpeg.getInstance().init(ctx);
@@ -50,34 +41,26 @@ public class YtDlpManager {
         }
     }
 
-    /**
-     * Ambil info video (format JSON).
-     */
     public JSONObject getInfo(String url) throws Exception {
         YoutubeDLRequest req = new YoutubeDLRequest(url);
         req.addOption("--dump-json");
         req.addOption("--no-warnings");
         req.addOption("--no-playlist");
 
-        YoutubeDLResponse resp = YoutubeDL.getInstance().execute(req, null, null);
+        YoutubeDLResponse resp = YoutubeDL.getInstance().execute(req);
         String out = resp.getOut();
 
         if (out == null || out.trim().isEmpty()) {
             throw new Exception("No output from yt-dlp");
         }
 
-        // Ambil baris JSON terakhir
         String[] lines = out.trim().split("\n");
         return new JSONObject(lines[lines.length - 1]);
     }
 
-    /**
-     * Download video. Return path file hasil.
-     */
     public String download(String url, String quality, File outputDir, DownloadCallback cb) throws Exception {
         if (!outputDir.exists()) outputDir.mkdirs();
 
-        // Format selector
         String format;
         switch (quality == null ? "" : quality) {
             case "audio": format = "bestaudio[ext=m4a]/bestaudio"; break;
@@ -96,10 +79,14 @@ public class YtDlpManager {
         req.addOption("--no-playlist");
         req.addOption("--newline");
 
-        YoutubeDLResponse resp = YoutubeDL.getInstance().execute(req, null, (progress, etaInSeconds, line) -> {
-            if (cb != null) {
-                cb.onProgress((float) progress, line);
-                cb.onLog(line);
+        // FIX: pakai anonymous class, bukan lambda
+        YoutubeDLResponse resp = YoutubeDL.getInstance().execute(req, null, new com.yausername.youtubedl_android.YoutubeDL.Callback() {
+            @Override
+            public void onProgressUpdate(float progress, long etaInSeconds, String line) {
+                if (cb != null) {
+                    cb.onProgress(progress, line);
+                    cb.onLog(line);
+                }
             }
         });
 
@@ -110,7 +97,6 @@ public class YtDlpManager {
             }
         }
 
-        // Cari file hasil download
         File[] files = outputDir.listFiles();
         if (files != null && files.length > 0) {
             File newest = files[0];
