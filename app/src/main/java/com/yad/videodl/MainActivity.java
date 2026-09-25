@@ -32,7 +32,7 @@ public class MainActivity extends AppCompatActivity {
     private Spinner qualitySpinner;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
-    private YtDlpManager ytDlp;
+    private DownloaderEngine engine;
     private File downloadDir;
 
     @Override
@@ -50,11 +50,10 @@ public class MainActivity extends AppCompatActivity {
 
         new Thread(() -> {
             try {
-                log("Menyiapkan yt-dlp (first run agak lama)...");
-                ytDlp = new YtDlpManager(this);
-                ytDlp.install();
-                String version = ytDlp.getVersion();
-                log("yt-dlp siap: " + version);
+                log("Menyiapkan downloader...");
+                engine = new DownloaderEngine(this);
+                engine.init();
+                log("Downloader siap: " + engine.getVersion());
                 setStatus("Siap!");
             } catch (Exception e) {
                 log("Gagal init: " + e.getMessage());
@@ -105,7 +104,7 @@ public class MainActivity extends AppCompatActivity {
         root.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("YouTube, Facebook, TikTok, Instagram, dll\n100% offline, tanpa server");
+        subtitle.setText("YouTube, Facebook, TikTok, Instagram, dll\nMulti-engine fallback");
         subtitle.setTextSize(12);
         subtitle.setTextColor(0xFF8892B0);
         subtitle.setPadding(0, 0, 0, 24);
@@ -224,7 +223,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void doInfo() {
-        if (ytDlp == null || !ytDlp.isReady()) { toast("yt-dlp belum siap"); return; }
+        if (engine == null || !engine.isReady()) { toast("Downloader belum siap"); return; }
         String url = etUrl.getText().toString().trim();
         if (url.isEmpty()) { toast("Masukkan URL"); return; }
 
@@ -233,25 +232,24 @@ public class MainActivity extends AppCompatActivity {
 
         new Thread(() -> {
             try {
-                JSONObject info = ytDlp.getInfo(url);
+                JSONObject info = engine.getInfo(url);
                 log("Judul: " + info.optString("title"));
                 log("Uploader: " + info.optString("uploader", info.optString("channel", "?")));
                 log("Durasi: " + info.optInt("duration") + " detik");
-                log("Views: " + info.optLong("view_count"));
                 setStatus("Info didapat");
             } catch (Exception e) {
-                log("Error: " + e.getMessage());
-                setStatus("Error");
+                log("Info tidak tersedia: " + e.getMessage());
+                setStatus("Info gagal");
             }
         }).start();
     }
 
     private void doDownload() {
-        if (ytDlp == null || !ytDlp.isReady()) { toast("yt-dlp belum siap"); return; }
+        if (engine == null || !engine.isReady()) { toast("Downloader belum siap"); return; }
         String url = etUrl.getText().toString().trim();
         if (url.isEmpty()) { toast("Masukkan URL"); return; }
 
-        String[] qualities = {"", "1080", "720", "480", "audio"};
+        String[] qualities = {"1080", "1080", "720", "480", "audio"};
         String quality = qualities[qualitySpinner.getSelectedItemPosition()];
 
         btnDownload.setEnabled(false);
@@ -260,33 +258,31 @@ public class MainActivity extends AppCompatActivity {
         updateProgressBar(0);
         log("\n> DOWNLOAD: " + url);
 
-        new Thread(() -> {
-            try {
-                String resultPath = ytDlp.download(url, quality, downloadDir,
-                    new YtDlpManager.DownloadCallback() {
-                        @Override
-                        public void onProgress(float percent, String rawLine) {
-                            updateProgressBar((int) percent);
-                            setStatus("Download: " + (int) percent + "%");
-                        }
-                        @Override
-                        public void onLog(String line) { log(line); }
-                    });
-
-                log("Download selesai: " + resultPath);
-                setStatus("Selesai");
-                toast("Tersimpan: " + resultPath);
-                ui.post(this::resetBtn);
-            } catch (Exception e) {
-                log("ERROR: " + e.getMessage());
-                ui.post(() -> { setStatus("Error"); resetBtn(); });
+        engine.download(url, quality, downloadDir, new DownloaderEngine.Callback() {
+            @Override
+            public void onProgress(float percent, String message) {
+                updateProgressBar((int) percent);
+                setStatus("Download: " + (int) percent + "%");
             }
-        }).start();
-    }
-
-    private void resetBtn() {
-        btnDownload.setEnabled(true);
-        btnDownload.setText("Download");
+            @Override
+            public void onLog(String line) { log(line); }
+            @Override
+            public void onDone(boolean success, String filePath, String error) {
+                ui.post(() -> {
+                    if (success) {
+                        setStatus("Selesai");
+                        log("File: " + filePath);
+                        toast("Tersimpan: " + filePath);
+                    } else {
+                        setStatus("Gagal");
+                        log("Error: " + error);
+                        toast(error);
+                    }
+                    btnDownload.setEnabled(true);
+                    btnDownload.setText("Download");
+                });
+            }
+        });
     }
 
     private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_LONG).show(); }
