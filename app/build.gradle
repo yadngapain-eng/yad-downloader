@@ -8,8 +8,8 @@ android {
         applicationId "com.yad.videodl"
         minSdk 24
         targetSdk 34
-        versionCode 12
-        versionName "12.0.0"
+        versionCode 13
+        versionName "13.0.0"
         ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
     }
 
@@ -27,12 +27,24 @@ android {
 
     packaging {
         resources {
-            excludes += ['META-INF/DEPENDENCIES','META-INF/LICENSE',
-                         'META-INF/LICENSE.txt','META-INF/NOTICE',
-                         'META-INF/NOTICE.txt','META-INF/INDEX.LIST',
-                         'META-INF/*.kotlin_module']
+            excludes += [
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE',
+                'META-INF/LICENSE.txt',
+                'META-INF/NOTICE',
+                'META-INF/NOTICE.txt',
+                'META-INF/INDEX.LIST',
+                'META-INF/*.kotlin_module'
+            ]
         }
-        jniLibs { useLegacyPackaging = true }
+        // FIX: exclude libc++_shared.so yang duplikat dari opencv
+        jniLibs {
+            useLegacyPackaging = true
+            pickFirsts += [
+                'lib/**/libc++_shared.so',
+                'lib/**/libc++_shared.so'
+            ]
+        }
     }
 }
 
@@ -45,6 +57,5 @@ dependencies {
     implementation 'com.antonkarpenko:ffmpeg-kit-full-gpl:2.1.0'
 
     // OpenCV untuk image recognition
-    // Quickbird Studios build — paling stabil untuk Android
     implementation 'com.quickbirdstudios:opencv:4.5.3.0'
 }
