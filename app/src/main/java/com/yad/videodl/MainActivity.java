@@ -217,7 +217,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setStatus(String msg) { ui.post(() -> tvStatus.setText(msg)); }
-    private void setProgress(int pct) { ui.post(() -> progressBar.setProgress(pct)); }
+
+    // FIX: rename dari setProgress ke updateProgressBar
+    private void updateProgressBar(int pct) { ui.post(() -> progressBar.setProgress(pct)); }
 
     private void pasteFromClipboard() {
         ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
@@ -270,7 +272,7 @@ public class MainActivity extends AppCompatActivity {
         btnDownload.setEnabled(false);
         btnDownload.setText("Downloading...");
         setStatus("Download...");
-        setProgress(0);
+        updateProgressBar(0);
         log("\n> DOWNLOAD: " + url);
         if (wmMode != null) log("Mode watermark: " + wmMode);
 
@@ -282,7 +284,7 @@ public class MainActivity extends AppCompatActivity {
                     new YtDlpManager.DownloadCallback() {
                         @Override
                         public void onProgress(float percent, String rawLine) {
-                            setProgress((int) percent);
+                            updateProgressBar((int) percent);
                             setStatus("Download: " + (int) percent + "%");
                         }
                         @Override
