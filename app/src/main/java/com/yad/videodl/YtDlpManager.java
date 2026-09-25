@@ -77,18 +77,11 @@ public class YtDlpManager {
         req.addOption("-o", outputTemplate);
         req.addOption("--no-warnings");
         req.addOption("--no-playlist");
-        req.addOption("--newline");
 
-        // FIX: pakai anonymous class, bukan lambda
-        YoutubeDLResponse resp = YoutubeDL.getInstance().execute(req, null, new com.yausername.youtubedl_android.YoutubeDL.Callback() {
-            @Override
-            public void onProgressUpdate(float progress, long etaInSeconds, String line) {
-                if (cb != null) {
-                    cb.onProgress(progress, line);
-                    cb.onLog(line);
-                }
-            }
-        });
+        if (cb != null) cb.onLog("Starting download...");
+
+        // Execute tanpa callback
+        YoutubeDLResponse resp = YoutubeDL.getInstance().execute(req);
 
         String out = resp.getOut();
         if (cb != null && out != null) {
