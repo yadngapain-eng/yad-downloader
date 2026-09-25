@@ -29,7 +29,7 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar progressBar;
     private Button btnDownload, btnInfo, btnPaste;
     private ScrollView logScroll;
-    private Spinner qualitySpinner, modeSpinner;
+    private Spinner qualitySpinner;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     private YtDlpManager ytDlp;
@@ -142,18 +142,11 @@ public class MainActivity extends AppCompatActivity {
         ArrayAdapter<String> qAdapter = new ArrayAdapter<>(this,
             android.R.layout.simple_spinner_dropdown_item, qualities);
         qualitySpinner.setAdapter(qAdapter);
-        root.addView(qualitySpinner);
-
-        modeSpinner = new Spinner(this);
-        String[] modes = {"Tanpa Hapus Watermark", "Hapus Watermark (Auto)", "Hapus Watermark (Blur)", "Hapus Watermark (Crop)"};
-        ArrayAdapter<String> mAdapter = new ArrayAdapter<>(this,
-            android.R.layout.simple_spinner_dropdown_item, modes);
-        modeSpinner.setAdapter(mAdapter);
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT);
         sp.setMargins(0, 8, 0, 16);
-        root.addView(modeSpinner, sp);
+        root.addView(qualitySpinner, sp);
 
         btnDownload = mkBtn("Download", 0xFF00E5FF);
         btnDownload.setTextColor(0xFF0A0E27);
@@ -261,20 +254,11 @@ public class MainActivity extends AppCompatActivity {
         String[] qualities = {"", "1080", "720", "480", "audio"};
         String quality = qualities[qualitySpinner.getSelectedItemPosition()];
 
-        int modePos = modeSpinner.getSelectedItemPosition();
-        String wmMode = null;
-        if (modePos == 1) wmMode = "auto";
-        else if (modePos == 2) wmMode = "blur";
-        else if (modePos == 3) wmMode = "crop";
-
         btnDownload.setEnabled(false);
         btnDownload.setText("Downloading...");
         setStatus("Download...");
         updateProgressBar(0);
         log("\n> DOWNLOAD: " + url);
-        if (wmMode != null) log("Mode watermark: " + wmMode);
-
-        final String fWmMode = wmMode;
 
         new Thread(() -> {
             try {
@@ -290,51 +274,8 @@ public class MainActivity extends AppCompatActivity {
                     });
 
                 log("Download selesai: " + resultPath);
-
-                if (fWmMode != null && resultPath != null) {
-                    File input = new File(resultPath);
-                    File output = new File(input.getParent(), "clean_" + input.getName());
-
-                    log("\n> HAPUS WATERMARK...");
-                    setStatus("Hapus watermark...");
-
-                    final Object lock = new Object();
-                    final boolean[] done = {false};
-                    final boolean[] success = {false};
-                    final File[] outFile = {null};
-
-                    WatermarkRemover.remove(this, input, output, fWmMode,
-                        new WatermarkRemover.ProgressCallback() {
-                            @Override
-                            public void onLog(String line) { log("[FFmpeg] " + line); }
-                            @Override
-                            public void onDone(boolean ok, File out, String err) {
-                                synchronized (lock) {
-                                    done[0] = true;
-                                    success[0] = ok;
-                                    outFile[0] = out;
-                                    if (ok) log("Watermark dihapus: " + out.getAbsolutePath());
-                                    else log("Gagal: " + err);
-                                    lock.notify();
-                                }
-                            }
-                        });
-
-                    synchronized (lock) {
-                        while (!done[0]) lock.wait();
-                    }
-
-                    if (success[0] && outFile[0] != null) {
-                        setStatus("Selesai (watermark removed)");
-                        toast("Bersih: " + outFile[0].getAbsolutePath());
-                    } else {
-                        setStatus("Video asli saja");
-                    }
-                } else {
-                    setStatus("Selesai");
-                    toast("Tersimpan: " + resultPath);
-                }
-
+                setStatus("Selesai");
+                toast("Tersimpan: " + resultPath);
                 ui.post(this::resetBtn);
             } catch (Exception e) {
                 log("ERROR: " + e.getMessage());
