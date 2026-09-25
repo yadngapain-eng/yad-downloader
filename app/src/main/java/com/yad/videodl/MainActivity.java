@@ -23,15 +23,18 @@ import java.io.File;
 public class MainActivity extends AppCompatActivity {
 
     private EditText etUrl;
-    private TextView tvStatus, tvLog;
+    private TextView tvStatus, tvLog, tvWmInfo;
     private ProgressBar progressBar;
-    private Button btnDownload, btnInfo, btnPaste;
+    private Button btnDownload, btnClear, btnPaste;
     private ScrollView logScroll;
-    private Spinner qualitySpinner;
+    private Spinner qualitySpinner, watermarkSpinner;
+    private Switch switchWm;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     private CobaltManager cobalt;
     private File downloadDir;
+
+    private WatermarkDetector.WatermarkArea detectedWm;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,7 +54,8 @@ public class MainActivity extends AppCompatActivity {
                 log("Menyiapkan downloader...");
                 cobalt = new CobaltManager(this);
                 cobalt.init();
-                log("Siap. Support: YouTube, Facebook, TikTok, IG, Twitter");
+                log("Siap. Platform: YouTube, Facebook, TikTok, IG, Twitter");
+                log("Fitur: Multi-quality + Auto watermark detection (OpenCV)");
                 setStatus("Siap!");
             } catch (Exception e) {
                 log("Gagal init: " + e.getMessage());
@@ -102,7 +106,7 @@ public class MainActivity extends AppCompatActivity {
         root.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("YouTube, Facebook, TikTok, Instagram\nCobalt API - support semua link");
+        subtitle.setText("YouTube, Facebook, TikTok, Instagram\nCobalt API + OpenCV Watermark Detector");
         subtitle.setTextSize(12);
         subtitle.setTextColor(0xFF8892B0);
         subtitle.setPadding(0, 0, 0, 24);
@@ -129,21 +133,60 @@ public class MainActivity extends AppCompatActivity {
         btnPaste.setOnClickListener(v -> pasteFromClipboard());
         row1.addView(btnPaste, btnLp());
 
-        btnInfo = mkBtn("Clear", 0xFF1A1F3A);
-        btnInfo.setOnClickListener(v -> { etUrl.setText(""); tvLog.setText("Log siap...\n"); });
-        row1.addView(btnInfo, btnLp());
+        btnClear = mkBtn("Clear", 0xFF1A1F3A);
+        btnClear.setOnClickListener(v -> { etUrl.setText(""); tvLog.setText("Log siap...\n"); tvWmInfo.setText(""); });
+        row1.addView(btnClear, btnLp());
         root.addView(row1);
 
+        TextView qLabel = new TextView(this);
+        qLabel.setText("📹 Kualitas Video:");
+        qLabel.setTextColor(0xFF8892B0);
+        qLabel.setTextSize(12);
+        qLabel.setPadding(0, 16, 0, 4);
+        root.addView(qLabel);
+
         qualitySpinner = new Spinner(this);
-        String[] qualities = {"1080p", "720p", "480p", "360p", "Audio Only (MP3)"};
+        String[] qualities = {"1080p (Full HD)", "720p (HD)", "480p", "360p", "Audio Only (MP3)"};
         ArrayAdapter<String> qAdapter = new ArrayAdapter<>(this,
             android.R.layout.simple_spinner_dropdown_item, qualities);
         qualitySpinner.setAdapter(qAdapter);
-        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT);
-        sp.setMargins(0, 8, 0, 16);
-        root.addView(qualitySpinner, sp);
+        root.addView(qualitySpinner);
+
+        TextView wmLabel = new TextView(this);
+        wmLabel.setText("🎨 Hapus Watermark (OpenCV detection):");
+        wmLabel.setTextColor(0xFF8892B0);
+        wmLabel.setTextSize(12);
+        wmLabel.setPadding(0, 16, 0, 4);
+        root.addView(wmLabel);
+
+        LinearLayout wmRow = new LinearLayout(this);
+        wmRow.setOrientation(LinearLayout.HORIZONTAL);
+        wmRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+
+        switchWm = new Switch(this);
+        switchWm.setText("Aktifkan hapus watermark otomatis");
+        switchWm.setTextColor(0xFFE8ECFF);
+        switchWm.setTextSize(13);
+        switchWm.setChecked(false);
+        switchWm.setOnCheckedChangeListener((btn, checked) -> {
+            watermarkSpinner.setEnabled(checked);
+        });
+        wmRow.addView(switchWm);
+        root.addView(wmRow);
+
+        watermarkSpinner = new Spinner(this);
+        String[] wmModes = {"Auto (delogo) - rekomendasi", "Blur area", "Crop (potong area)"};
+        ArrayAdapter<String> wmAdapter = new ArrayAdapter<>(this,
+            android.R.layout.simple_spinner_dropdown_item, wmModes);
+        watermarkSpinner.setAdapter(wmAdapter);
+        watermarkSpinner.setEnabled(false);
+        root.addView(watermarkSpinner);
+
+        tvWmInfo = new TextView(this);
+        tvWmInfo.setTextColor(0xFFFFD54F);
+        tvWmInfo.setTextSize(11);
+        tvWmInfo.setPadding(0, 8, 0, 16);
+        root.addView(tvWmInfo);
 
         btnDownload = mkBtn("Download", 0xFF00E5FF);
         btnDownload.setTextColor(0xFF0A0E27);
@@ -177,7 +220,7 @@ public class MainActivity extends AppCompatActivity {
         tvLog.setTypeface(android.graphics.Typeface.MONOSPACE);
         tvLog.setText("Log siap...\n");
         logScroll.addView(tvLog);
-        root.addView(logScroll);
+        root.addView(tvLog);
 
         setContentView(mainScroll);
     }
@@ -225,8 +268,16 @@ public class MainActivity extends AppCompatActivity {
         String url = etUrl.getText().toString().trim();
         if (url.isEmpty()) { toast("Masukkan URL"); return; }
 
-        String[] qualities = {"1080", "720", "480", "360", "audio"};
-        String quality = qualities[qualitySpinner.getSelectedItemPosition()];
+        String[] qualityMap = {"1080", "720", "480", "360", "audio"};
+        String quality = qualityMap[qualitySpinner.getSelectedItemPosition()];
+
+        boolean removeWm = switchWm.isChecked();
+        String wmMode;
+        switch (watermarkSpinner.getSelectedItemPosition()) {
+            case 1: wmMode = "blur"; break;
+            case 2: wmMode = "crop"; break;
+            default: wmMode = "auto"; break;
+        }
 
         btnDownload.setEnabled(false);
         btnDownload.setText("Downloading...");
@@ -234,6 +285,10 @@ public class MainActivity extends AppCompatActivity {
         updateProgressBar(0);
         log("\n> DOWNLOAD: " + url);
         log("> Kualitas: " + quality);
+        if (removeWm) log("> Watermark removal: ON (mode " + wmMode + ")");
+
+        final String fWmMode = wmMode;
+        final boolean fRemoveWm = removeWm;
 
         cobalt.download(url, quality, downloadDir, new CobaltManager.Callback() {
             @Override
@@ -245,19 +300,86 @@ public class MainActivity extends AppCompatActivity {
             public void onLog(String line) { log(line); }
             @Override
             public void onDone(boolean success, String filePath, String error) {
-                ui.post(() -> {
-                    if (success) {
-                        setStatus("✅ Selesai");
-                        log("✅ File: " + filePath);
-                        toast("Tersimpan di Downloads/YadDownloader");
-                    } else {
+                if (!success) {
+                    ui.post(() -> {
                         setStatus("❌ Gagal");
                         log("❌ Error: " + error);
                         toast("Gagal: " + error);
-                    }
-                    btnDownload.setEnabled(true);
-                    btnDownload.setText("Download");
-                });
+                        btnDownload.setEnabled(true);
+                        btnDownload.setText("Download");
+                    });
+                    return;
+                }
+
+                log("✅ Download selesai: " + filePath);
+
+                if (fRemoveWm) {
+                    // Proses: image recognition + hapus watermark
+                    ui.post(() -> {
+                        setStatus("🔍 Deteksi watermark...");
+                        log("\n> Analisis watermark pakai OpenCV...");
+                    });
+
+                    new Thread(() -> {
+                        File input = new File(filePath);
+
+                        // Detect watermark pakai image recognition
+                        WatermarkDetector.WatermarkArea area =
+                            WatermarkDetectorV2.detectFromVideo(input, url);
+
+                        if (area == null) {
+                            ui.post(() -> {
+                                setStatus("⚠️ Watermark tidak terdeteksi");
+                                log("Tidak bisa deteksi watermark, skip removal");
+                                toast("Watermark tidak terdeteksi, file asli disimpan");
+                                btnDownload.setEnabled(true);
+                                btnDownload.setText("Download");
+                            });
+                            return;
+                        }
+
+                        ui.post(() -> {
+                            log("✅ Watermark terdeteksi:");
+                            log("  Platform: " + area.platform);
+                            log("  Label: " + area.label);
+                            log("  Confidence: " + (int)(area.confidence * 100) + "%");
+                            log("  Posisi: " + (int)(area.xPercent*100) + "%, " + (int)(area.yPercent*100) + "%");
+                            setStatus("🎨 Hapus watermark...");
+                        });
+
+                        File output = new File(input.getParent(), "clean_" + input.getName());
+
+                        WatermarkRemover.remove(input, output, area, fWmMode,
+                            new WatermarkRemover.ProgressCallback() {
+                                @Override
+                                public void onLog(String line) { log("[FFmpeg] " + line); }
+                                @Override
+                                public void onDone(boolean ok, File out, String err) {
+                                    ui.post(() -> {
+                                        if (ok && out != null && out.exists()) {
+                                            setStatus("✅ Selesai (clean)");
+                                            log("✅ File bersih: " + out.getAbsolutePath());
+                                            toast("Bersih! Cek Downloads/YadDownloader/");
+                                        } else {
+                                            setStatus("⚠️ File asli saja");
+                                            log("Gagal hapus watermark: " + err);
+                                            toast("File asli tersimpan");
+                                        }
+                                        btnDownload.setEnabled(true);
+                                        btnDownload.setText("Download");
+                                    });
+                                }
+                            });
+                    }).start();
+                } else {
+                    ui.post(() -> {
+                        setStatus("✅ Selesai");
+                        log("✅ File: " + filePath);
+                        toast("Tersimpan di Downloads/YadDownloader");
+                        btnDownload.setEnabled(true);
+                        btnDownload.setText("Download");
+                    });
+                }
             }
         });
     }
