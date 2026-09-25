@@ -11,6 +11,8 @@ import com.yausername.ffmpeg.FFmpeg;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class YtDlpManager {
 
@@ -27,6 +29,27 @@ public class YtDlpManager {
         FFmpeg.getInstance().init(ctx);
         initialized = true;
         Log.d(TAG, "youtubedl-android initialized");
+
+        // Auto-update yt-dlp ke versi terbaru (biar support FB/TikTok/IG)
+        try {
+            updateYtDlp();
+        } catch (Exception e) {
+            Log.w(TAG, "Auto-update gagal: " + e.getMessage());
+            // Tidak fatal — pakai versi bundled
+        }
+    }
+
+    /**
+     * Update yt-dlp ke versi terbaru dari GitHub.
+     */
+    public void updateYtDlp() throws Exception {
+        Log.d(TAG, "Update yt-dlp...");
+
+        YoutubeDLRequest req = new YoutubeDLRequest("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp");
+        // Library ini punya method updateYoutubeDL()
+        YoutubeDL.getInstance().updateYoutubeDL(ctx, YoutubeDL.UpdateChannel.STABLE);
+
+        Log.d(TAG, "yt-dlp updated");
     }
 
     public boolean isReady() {
@@ -35,9 +58,13 @@ public class YtDlpManager {
 
     public String getVersion() {
         try {
-            return YoutubeDL.getInstance().version(ctx);
+            String version = YoutubeDL.getInstance().version(ctx);
+            if (version == null || version.trim().isEmpty()) {
+                return "bundled";
+            }
+            return version;
         } catch (Exception e) {
-            return "unknown";
+            return "bundled";
         }
     }
 
@@ -77,16 +104,25 @@ public class YtDlpManager {
         req.addOption("-o", outputTemplate);
         req.addOption("--no-warnings");
         req.addOption("--no-playlist");
+        req.addOption("--no-check-certificate");
 
         if (cb != null) cb.onLog("Starting download...");
 
-        // Execute tanpa callback
         YoutubeDLResponse resp = YoutubeDL.getInstance().execute(req);
 
         String out = resp.getOut();
-        if (cb != null && out != null) {
-            for (String line : out.split("\n")) {
-                cb.onLog(line);
+        String err = resp.getErr();
+
+        if (cb != null) {
+            if (out != null) {
+                for (String line : out.split("\n")) {
+                    cb.onLog(line);
+                }
+            }
+            if (err != null) {
+                for (String line : err.split("\n")) {
+                    cb.onLog("ERR: " + line);
+                }
             }
         }
 
