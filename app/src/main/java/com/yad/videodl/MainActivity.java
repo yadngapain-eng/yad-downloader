@@ -3,7 +3,6 @@ package com.yad.videodl;
 import android.Manifest;
 import android.content.ClipData;
 import android.content.ClipboardManager;
-import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
@@ -12,30 +11,16 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.view.View;
 import android.widget.*;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import org.schabi.newpipe.extractor.NewPipe;
-import org.schabi.newpipe.extractor.ServiceList;
-import org.schabi.newpipe.extractor.stream.StreamInfo;
-import org.schabi.newpipe.extractor.stream.VideoStream;
-import org.schabi.newpipe.extractor.downloader.Downloader;
-import org.schabi.newpipe.extractor.downloader.Request;
-import org.schabi.newpipe.extractor.downloader.Response;
+import org.json.JSONObject;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.TimeUnit;
-
-import okhttp3.OkHttpClient;
-import okhttp3.RequestBody;
-import okhttp3.ResponseBody;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -44,12 +29,11 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar progressBar;
     private Button btnDownload, btnInfo, btnPaste;
     private ScrollView logScroll;
+    private Spinner qualitySpinner, modeSpinner;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
-    // User-Agent agar tidak diblok YouTube
-    private static final String USER_AGENT =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    private YtDlpManager ytDlp;
+    private File downloadDir;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -58,14 +42,22 @@ public class MainActivity extends AppCompatActivity {
         requestStoragePermission();
         handleShareIntent(getIntent());
 
-        // FIX: Init NewPipe di background thread (dulu crash karena main thread)
+        downloadDir = new File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "YadDownloader"
+        );
+        if (!downloadDir.exists()) downloadDir.mkdirs();
+
         new Thread(() -> {
             try {
-                NewPipe.init(new OkHttpDownloader());
-                log("NewPipe siap.");
-                setStatus("Siap.");
+                log("Menyiapkan yt-dlp...");
+                ytDlp = new YtDlpManager(this);
+                ytDlp.install();
+                String version = ytDlp.getVersion();
+                log("yt-dlp siap: v" + version);
+                setStatus("Siap!");
             } catch (Exception e) {
-                log("Init error: " + e.getMessage());
+                log("Gagal init yt-dlp: " + e.getMessage());
                 setStatus("Init gagal");
             }
         }).start();
@@ -81,27 +73,39 @@ public class MainActivity extends AppCompatActivity {
         if (intent != null && Intent.ACTION_SEND.equals(intent.getAction())) {
             String shared = intent.getStringExtra(Intent.EXTRA_TEXT);
             if (shared != null) {
-                etUrl.setText(shared.trim());
+                etUrl.setText(extractUrl(shared));
                 log("Link dari share: " + shared);
             }
         }
     }
 
+    private String extractUrl(String text) {
+        String[] parts = text.split("\\s+");
+        for (String p : parts) {
+            if (p.startsWith("http://") || p.startsWith("https://")) return p;
+        }
+        return text.trim();
+    }
+
     private void buildUI() {
+        ScrollView mainScroll = new ScrollView(this);
+        mainScroll.setBackgroundColor(0xFF0A0E27);
+        mainScroll.setFillViewport(true);
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(40, 60, 40, 40);
-        root.setBackgroundColor(0xFF0A0E27);
+        mainScroll.addView(root);
 
         TextView title = new TextView(this);
         title.setText("YadDownloader");
-        title.setTextSize(24);
+        title.setTextSize(26);
         title.setTextColor(0xFF00E5FF);
         title.setPadding(0, 0, 0, 8);
         root.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("YouTube, SoundCloud, PeerTube, Bandcamp");
+        subtitle.setText("YouTube, Facebook, TikTok, Instagram, dll\n100% offline, tanpa server");
         subtitle.setTextSize(12);
         subtitle.setTextColor(0xFF8892B0);
         subtitle.setPadding(0, 0, 0, 24);
@@ -133,12 +137,30 @@ public class MainActivity extends AppCompatActivity {
         row1.addView(btnInfo, btnLp());
         root.addView(row1);
 
-        btnDownload = mkBtn("Download Video", 0xFF00E5FF);
+        qualitySpinner = new Spinner(this);
+        String[] qualities = {"Best Quality", "1080p", "720p", "480p", "Audio Only"};
+        ArrayAdapter<String> qAdapter = new ArrayAdapter<>(this,
+            android.R.layout.simple_spinner_dropdown_item, qualities);
+        qualitySpinner.setAdapter(qAdapter);
+        root.addView(qualitySpinner);
+
+        modeSpinner = new Spinner(this);
+        String[] modes = {"Tanpa Hapus Watermark", "Hapus Watermark (Auto)", "Hapus Watermark (Blur)", "Hapus Watermark (Crop)"};
+        ArrayAdapter<String> mAdapter = new ArrayAdapter<>(this,
+            android.R.layout.simple_spinner_dropdown_item, modes);
+        modeSpinner.setAdapter(mAdapter);
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT);
+        sp.setMargins(0, 8, 0, 16);
+        root.addView(modeSpinner, sp);
+
+        btnDownload = mkBtn("Download", 0xFF00E5FF);
         btnDownload.setTextColor(0xFF0A0E27);
         btnDownload.setOnClickListener(v -> doDownload());
         LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 140);
-        dlp.setMargins(0, 16, 0, 16);
+        dlp.setMargins(0, 0, 0, 16);
         root.addView(btnDownload, dlp);
 
         progressBar = new ProgressBar(this, null,
@@ -156,7 +178,7 @@ public class MainActivity extends AppCompatActivity {
         logScroll.setBackgroundColor(0xFF060918);
         logScroll.setPadding(16, 16, 16, 16);
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
+            LinearLayout.LayoutParams.MATCH_PARENT, 400);
         logScroll.setLayoutParams(slp);
 
         tvLog = new TextView(this);
@@ -167,7 +189,7 @@ public class MainActivity extends AppCompatActivity {
         logScroll.addView(tvLog);
         root.addView(logScroll);
 
-        setContentView(root);
+        setContentView(mainScroll);
     }
 
     private Button mkBtn(String text, int bg) {
@@ -194,13 +216,8 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private void setStatus(String msg) {
-        ui.post(() -> tvStatus.setText(msg));
-    }
-
-    private void setProgress(int pct) {
-        ui.post(() -> progressBar.setProgress(pct));
-    }
+    private void setStatus(String msg) { ui.post(() -> tvStatus.setText(msg)); }
+    private void setProgress(int pct) { ui.post(() -> progressBar.setProgress(pct)); }
 
     private void pasteFromClipboard() {
         ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
@@ -208,210 +225,146 @@ public class MainActivity extends AppCompatActivity {
             ClipData clip = cm.getPrimaryClip();
             if (clip != null && clip.getItemCount() > 0) {
                 CharSequence text = clip.getItemAt(0).getText();
-                if (text != null) etUrl.setText(text.toString().trim());
+                if (text != null) etUrl.setText(extractUrl(text.toString()));
             }
         }
     }
 
-    // ============================================
-    // OkHttpDownloader dengan User-Agent (FIX #3)
-    // ============================================
-    static class OkHttpDownloader extends Downloader {
-        private final OkHttpClient client = new OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .build();
-
-        @Override
-        public Response execute(Request request) throws java.io.IOException {
-            String method = request.httpMethod();
-            String url = request.url();
-
-            okhttp3.Request.Builder b = new okhttp3.Request.Builder()
-                .url(url)
-                .header("User-Agent", USER_AGENT);
-
-            for (java.util.Map.Entry<String, List<String>> e : request.headers().entrySet()) {
-                for (String v : e.getValue()) b.addHeader(e.getKey(), v);
-            }
-
-            if ("POST".equals(method) && request.dataToSend() != null) {
-                b.post(RequestBody.create(request.dataToSend()));
-            }
-
-            okhttp3.Response resp = client.newCall(b.build()).execute();
-            ResponseBody body = resp.body();
-            String bodyStr = body != null ? body.string() : "";
-
-            return new Response(
-                resp.code(),
-                resp.message(),
-                resp.headers().toMultimap(),
-                bodyStr,
-                url
-            );
-        }
-    }
-
-    // ============================================
-    // INFO
-    // ============================================
     private void doInfo() {
+        if (ytDlp == null || !ytDlp.isReady()) { toast("yt-dlp belum siap"); return; }
         String url = etUrl.getText().toString().trim();
-        if (url.isEmpty()) { toast("Masukkan URL dulu"); return; }
+        if (url.isEmpty()) { toast("Masukkan URL"); return; }
 
         setStatus("Ambil info...");
         log("\n> INFO: " + url);
 
         new Thread(() -> {
             try {
-                StreamInfo info = StreamInfo.getInfo(ServiceList.YouTube, url);
-                log("Judul    : " + info.getName());
-                log("Uploader : " + info.getUploaderName());
-                log("Durasi   : " + info.getDuration() + " detik");
-                log("Views    : " + info.getViewCount());
+                JSONObject info = ytDlp.getInfo(url);
+                log("Judul: " + info.optString("title"));
+                log("Uploader: " + info.optString("uploader", info.optString("channel", "?")));
+                log("Durasi: " + info.optInt("duration") + " detik");
+                log("Views: " + info.optLong("view_count"));
                 setStatus("Info didapat");
             } catch (Exception e) {
-                log("ERROR: " + e.getMessage());
+                log("Error: " + e.getMessage());
                 setStatus("Error");
             }
         }).start();
     }
 
-    // ============================================
-    // DOWNLOAD dengan OkHttp stream (FIX #4)
-    // ============================================
     private void doDownload() {
+        if (ytDlp == null || !ytDlp.isReady()) { toast("yt-dlp belum siap"); return; }
         String url = etUrl.getText().toString().trim();
-        if (url.isEmpty()) { toast("Masukkan URL dulu"); return; }
+        if (url.isEmpty()) { toast("Masukkan URL"); return; }
+
+        String[] qualities = {"", "1080", "720", "480", "audio"};
+        String quality = qualities[qualitySpinner.getSelectedItemPosition()];
+
+        int modePos = modeSpinner.getSelectedItemPosition();
+        String wmMode = null;
+        if (modePos == 1) wmMode = "auto";
+        else if (modePos == 2) wmMode = "blur";
+        else if (modePos == 3) wmMode = "crop";
 
         btnDownload.setEnabled(false);
-        btnDownload.setText("Memproses...");
-        setStatus("Mengambil info stream...");
+        btnDownload.setText("Downloading...");
+        setStatus("Download...");
         setProgress(0);
         log("\n> DOWNLOAD: " + url);
+        if (wmMode != null) log("Mode watermark: " + wmMode);
+
+        final String fWmMode = wmMode;
 
         new Thread(() -> {
             try {
-                StreamInfo info = StreamInfo.getInfo(ServiceList.YouTube, url);
-                log("Judul: " + info.getName());
-
-                List<VideoStream> videos = info.getVideoStreams();
-                VideoStream best = null;
-                for (VideoStream v : videos) {
-                    if (v.getFormat() != null && v.getFormat().getName().contains("mp4")) {
-                        if (best == null || v.getResolution().compareTo(best.getResolution()) > 0) {
-                            best = v;
+                String resultPath = ytDlp.download(url, quality, downloadDir,
+                    new YtDlpManager.DownloadCallback() {
+                        @Override
+                        public void onProgress(float percent, String rawLine) {
+                            setProgress((int) percent);
+                            setStatus("Download: " + (int) percent + "%");
                         }
-                    }
-                }
-                if (best == null && !videos.isEmpty()) best = videos.get(0);
+                        @Override
+                        public void onLog(String line) { log(line); }
+                    });
 
-                if (best == null) {
-                    log("Tidak ada video stream");
-                    ui.post(this::resetBtn);
-                    return;
-                }
+                log("Download selesai: " + resultPath);
 
-                String videoUrl = best.getUrl();
-                String safeTitle = info.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
-                if (safeTitle.length() > 80) safeTitle = safeTitle.substring(0, 80);
+                if (fWmMode != null && resultPath != null) {
+                    File input = new File(resultPath);
+                    File output = new File(input.getParent(), "clean_" + input.getName());
 
-                log("Resolusi: " + best.getResolution());
-                log("Format  : " + best.getFormat().getName());
-                log("Mulai download...");
+                    log("\n> HAPUS WATERMARK...");
+                    setStatus("Hapus watermark...");
 
-                // FIX: Stream manual dengan OkHttp (bukan DownloadManager)
-                File dir = new File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                    "YadDownloader"
-                );
-                if (!dir.exists()) dir.mkdirs();
-                File outFile = new File(dir, safeTitle + ".mp4");
+                    final Object lock = new Object();
+                    final boolean[] done = {false};
+                    final boolean[] success = {false};
+                    final File[] outFile = {null};
 
-                OkHttpClient dlClient = new OkHttpClient.Builder()
-                    .connectTimeout(30, TimeUnit.SECONDS)
-                    .readTimeout(120, TimeUnit.SECONDS)
-                    .build();
-
-                okhttp3.Request req = new okhttp3.Request.Builder()
-                    .url(videoUrl)
-                    .header("User-Agent", USER_AGENT)
-                    .header("Referer", "https://www.youtube.com/")
-                    .build();
-
-                okhttp3.Response resp = dlClient.newCall(req).execute();
-                if (!resp.isSuccessful()) {
-                    log("HTTP error: " + resp.code());
-                    ui.post(this::resetBtn);
-                    return;
-                }
-
-                long total = resp.body().contentLength();
-                try (InputStream in = resp.body().byteStream();
-                     FileOutputStream out = new FileOutputStream(outFile)) {
-                    byte[] buf = new byte[8192];
-                    long downloaded = 0;
-                    int n;
-                    int lastPct = -1;
-                    while ((n = in.read(buf)) > 0) {
-                        out.write(buf, 0, n);
-                        downloaded += n;
-                        if (total > 0) {
-                            int pct = (int) (downloaded * 100 / total);
-                            if (pct != lastPct && pct % 2 == 0) {
-                                setProgress(pct);
-                                lastPct = pct;
+                    WatermarkRemover.remove(this, input, output, fWmMode,
+                        new WatermarkRemover.ProgressCallback() {
+                            @Override
+                            public void onLog(String line) { log("[FFmpeg] " + line); }
+                            @Override
+                            public void onDone(boolean ok, File out, String err) {
+                                synchronized (lock) {
+                                    done[0] = true;
+                                    success[0] = ok;
+                                    outFile[0] = out;
+                                    if (ok) log("Watermark dihapus: " + out.getAbsolutePath());
+                                    else log("Gagal: " + err);
+                                    lock.notify();
+                                }
                             }
-                        }
+                        });
+
+                    synchronized (lock) {
+                        while (!done[0]) lock.wait();
                     }
+
+                    if (success[0] && outFile[0] != null) {
+                        setStatus("Selesai (watermark removed)");
+                        toast("Bersih: " + outFile[0].getAbsolutePath());
+                    } else {
+                        setStatus("Video asli saja");
+                    }
+                } else {
+                    setStatus("Selesai");
+                    toast("Tersimpan: " + resultPath);
                 }
 
-                final String path = outFile.getAbsolutePath();
-                log("Selesai: " + path);
-                ui.post(() -> {
-                    setStatus("Download selesai");
-                    setProgress(100);
-                    resetBtn();
-                    toast("Tersimpan di: " + path);
-                });
+                ui.post(this::resetBtn);
             } catch (Exception e) {
                 log("ERROR: " + e.getMessage());
-                ui.post(() -> {
-                    setStatus("Error");
-                    resetBtn();
-                });
+                ui.post(() -> { setStatus("Error"); resetBtn(); });
             }
         }).start();
     }
 
     private void resetBtn() {
         btnDownload.setEnabled(true);
-        btnDownload.setText("Download Video");
+        btnDownload.setText("Download");
     }
 
-    private void toast(String s) {
-        Toast.makeText(this, s, Toast.LENGTH_LONG).show();
-    }
+    private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_LONG).show(); }
 
     private void requestStoragePermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             if (!Environment.isExternalStorageManager()) {
                 try {
                     startActivity(new Intent(
-                        android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                         Uri.parse("package:" + getPackageName())));
                 } catch (Exception e) {
                     try {
-                        startActivity(new Intent(
-                            android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+                        startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
                     } catch (Exception ignored) {}
                 }
             }
         } else {
-            if (ContextCompat.checkSelfPermission(this,
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, new String[]{
                     Manifest.permission.WRITE_EXTERNAL_STORAGE,
