@@ -1,40 +1,61 @@
 # YadDownloader
 
-Video downloader Android — download YouTube, Facebook, TikTok, Instagram, dll.
+Video downloader Android — pakai NewPipe Extractor.
 
-**Build otomatis via GitHub Actions.**
+## Site yang Didukung
+
+NewPipe Extractor hanya support:
+
+- YouTube
+- SoundCloud
+- PeerTube
+- Bandcamp
+- MediaCCC
+
+Tidak support Facebook, TikTok, Instagram, Twitter/X.
 
 ## Cara Download APK
 
 1. Buka tab **Actions** di repo ini
-2. Klik workflow **Build APK** yang hijau (paling atas)
-3. Scroll ke bawah ke bagian **Artifacts**
+2. Klik workflow **Build APK** paling atas
+3. Scroll ke **Artifacts** di bawah
 4. Klik **YadDownloader-debug** untuk download ZIP
-5. Extract ZIP → install `app-debug.apk` di HP
+5. Extract ZIP, install `app-debug.apk` di HP
 
 ## Cara Pakai
 
-1. Buka app → tunggu yt-dlp selesai download (~30 detik pertama)
-2. Paste link video (atau share dari YouTube/FB → pilih YadDownloader)
-3. Klik **Download Video**
-4. Cek folder **Downloads/YadDownloader** di HP
+1. Buka app
+2. Paste link video (atau share dari YouTube)
+3. Klik **Info** untuk cek judul/uploader
+4. Klik **Download Video**
+5. Tunggu selesai, cek folder `Downloads/YadDownloader`
 
 ## Fitur
-- ✅ Offline (yt-dlp binary bundled otomatis di runtime)
-- ✅ Support YouTube, Facebook, TikTok, Instagram, Twitter/X, dll
-- ✅ Share intent (share dari app lain langsung masuk)
-- ✅ Cek info video dulu (judul, uploader, durasi)
-- ✅ Progress log real-time
+
+- Download video mp4
+- Cek info video
+- Progress bar real-time
+- Share intent support
+- Log detail
+
+## Known Issues
+
+- Download file bisa besar (100MB+ untuk video panjang)
+- Butuh izin storage manual di Android 11+
+- Beberapa video YouTube mungkin butuh login (belum support)
 
 ## Build Sendiri
-- Buka repo di Android Studio
-- Build → Build APK
 
-Atau push ke `main` → GitHub Actions build otomatis.
+Via GitHub Actions: push ke `main` otomatis build.
 
-## ⚠️ Peringatan
-- Gunakan untuk konten yang kamu punya hak atau fair use
-- YouTube sering update algoritma — kalau gagal, app otomatis download yt-dlp versi terbaru
+Atau via Android Studio:
+1. Buka repo
+2. Build -> Build APK
+
+## Peringatan
+
+- Gunakan untuk konten yang kamu punya hak
 - Bukan untuk distribusi Play Store
+- YouTube sering update algoritma, app mungkin perlu di-update berkala
 
-© 2026 YadDownloader — Dibuat oleh Ysdev
+MIT License - Copyright 2026 YadDownloader
