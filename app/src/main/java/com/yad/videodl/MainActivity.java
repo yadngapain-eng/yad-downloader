@@ -50,14 +50,14 @@ public class MainActivity extends AppCompatActivity {
 
         new Thread(() -> {
             try {
-                log("Menyiapkan yt-dlp...");
+                log("Menyiapkan yt-dlp (first run agak lama)...");
                 ytDlp = new YtDlpManager(this);
                 ytDlp.install();
                 String version = ytDlp.getVersion();
-                log("yt-dlp siap: v" + version);
+                log("yt-dlp siap: " + version);
                 setStatus("Siap!");
             } catch (Exception e) {
-                log("Gagal init yt-dlp: " + e.getMessage());
+                log("Gagal init: " + e.getMessage());
                 setStatus("Init gagal");
             }
         }).start();
@@ -217,8 +217,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setStatus(String msg) { ui.post(() -> tvStatus.setText(msg)); }
-
-    // FIX: rename dari setProgress ke updateProgressBar
     private void updateProgressBar(int pct) { ui.post(() -> progressBar.setProgress(pct)); }
 
     private void pasteFromClipboard() {
