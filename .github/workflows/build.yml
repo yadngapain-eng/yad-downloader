@@ -22,14 +22,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Download yt-dlp binary for Android ARM64
-        run: |
-          mkdir -p app/src/main/assets
-          curl -L -o app/src/main/assets/yt-dlp \
-            https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64
-          chmod +x app/src/main/assets/yt-dlp
-          ls -la app/src/main/assets/
-
       - name: Accept SDK licenses
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
