@@ -3,12 +3,12 @@ package com.yad.videodl;
 import android.content.Context;
 import android.util.Log;
 
-import com.arthenica.ffmpegkit.FFmpegKit;
-import com.arthenica.ffmpegkit.FFmpegSession;
-import com.arthenica.ffmpegkit.FFprobeKit;
-import com.arthenica.ffmpegkit.MediaInformation;
-import com.arthenica.ffmpegkit.ReturnCode;
-import com.arthenica.ffmpegkit.StreamInformation;
+import com.antonkarpenko.ffmpegkit.FFmpegKit;
+import com.antonkarpenko.ffmpegkit.FFmpegSession;
+import com.antonkarpenko.ffmpegkit.FFprobeKit;
+import com.antonkarpenko.ffmpegkit.MediaInformation;
+import com.antonkarpenko.ffmpegkit.ReturnCode;
+import com.antonkarpenko.ffmpegkit.StreamInformation;
 
 import java.io.File;
 
@@ -40,8 +40,10 @@ public class WatermarkRemover {
                 String w = s.getProperties().get("width");
                 String h = s.getProperties().get("height");
                 if (w != null && h != null) {
-                    width = Integer.parseInt(w);
-                    height = Integer.parseInt(h);
+                    try {
+                        width = Integer.parseInt(w);
+                        height = Integer.parseInt(h);
+                    } catch (Exception e) {}
                     break;
                 }
             }
@@ -66,8 +68,7 @@ public class WatermarkRemover {
 
         FFmpegKit.executeAsync(cmd,
             s -> {
-                long rc = s.getReturnCode();
-                if (ReturnCode.isSuccess(rc)) {
+                if (ReturnCode.isSuccess(s.getReturnCode())) {
                     cb.onLog("Selesai!");
                     cb.onDone(true, output, null);
                 } else {
@@ -85,12 +86,12 @@ public class WatermarkRemover {
     private static String buildFilter(String mode, int width, int height) {
         int wmW = Math.max(80, (int)(width * 0.25));
         int wmH = Math.max(40, (int)(height * 0.10));
-        int wmX = width - wmW - 10;
-        int wmY = height - wmH - 10;
+        int wmX = Math.max(0, width - wmW - 10);
+        int wmY = Math.max(0, height - wmH - 10);
 
         if ("crop".equals(mode)) {
-            int cropW = (int)(width * 0.98) & ~1;
-            int cropH = (int)(height * 0.82) & ~1;
+            int cropW = ((int)(width * 0.98)) & ~1;
+            int cropH = ((int)(height * 0.82)) & ~1;
             int cropX = (width - cropW) / 2;
             int cropY = (int)(height * 0.07);
             return "crop=" + cropW + ":" + cropH + ":" + cropX + ":" + cropY;
